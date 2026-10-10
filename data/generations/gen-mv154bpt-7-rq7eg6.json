@@ -1,0 +1,12 @@
+{
+  "id": "gen-mv154bpt-7-rq7eg6",
+  "kind": "architecture",
+  "projectId": null,
+  "timestamp": "2026-10-09T15:48:48.593Z",
+  "status": "success",
+  "provider": "demo",
+  "model": null,
+  "durationMs": 1,
+  "nodeCount": 6,
+  "edgeCount": 5
+}

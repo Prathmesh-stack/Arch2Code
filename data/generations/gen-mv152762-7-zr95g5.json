@@ -1,0 +1,12 @@
+{
+  "id": "gen-mv152762-7-zr95g5",
+  "kind": "architecture",
+  "projectId": null,
+  "timestamp": "2026-10-09T15:47:09.386Z",
+  "status": "success",
+  "provider": "demo",
+  "model": null,
+  "durationMs": 1,
+  "nodeCount": 6,
+  "edgeCount": 5
+}

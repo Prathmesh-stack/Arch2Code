@@ -1,0 +1,12 @@
+{
+  "name": "arch2code-ai",
+  "description": "Arch2Code AI — visual system architecture platform (describe → design → validate → generate → export). Zero runtime dependencies.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=.env server/js/server.cjs",
+    "test": "node --test test/unit.test.cjs test/api.test.cjs",
+    "test:unit": "node --test test/unit.test.cjs",
+    "test:api": "node --test test/api.test.cjs"
+  }
+}

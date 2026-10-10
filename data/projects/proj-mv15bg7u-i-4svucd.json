@@ -1,0 +1,320 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": {
+    "id": "proj-mv15bg7u-i-4svucd",
+    "name": "Demo E-Commerce",
+    "description": "Storefront, order/checkout services, Kafka events, payments and a data warehouse.",
+    "status": "draft",
+    "createdAt": "2026-10-09T15:54:21.018Z",
+    "updatedAt": "2026-10-09T15:54:21.018Z"
+  },
+  "architecture": {
+    "nodes": [
+      {
+        "id": "n-client",
+        "type": "web-app",
+        "position": {
+          "x": 40,
+          "y": 160
+        },
+        "data": {
+          "name": "Storefront",
+          "technology": "Next.js",
+          "description": "",
+          "environment": "production",
+          "port": null,
+          "tags": [],
+          "envVarNames": [],
+          "endpoints": [],
+          "notes": ""
+        },
+        "meta": {
+          "width": 180,
+          "height": 64
+        }
+      },
+      {
+        "id": "n-gw",
+        "type": "api-gateway",
+        "position": {
+          "x": 280,
+          "y": 160
+        },
+        "data": {
+          "name": "API Gateway",
+          "technology": "",
+          "description": "",
+          "environment": "production",
+          "port": 8080,
+          "tags": [],
+          "envVarNames": [],
+          "endpoints": [],
+          "notes": ""
+        },
+        "meta": {
+          "width": 180,
+          "height": 64
+        }
+      },
+      {
+        "id": "n-catalog",
+        "type": "backend-service",
+        "position": {
+          "x": 540,
+          "y": 40
+        },
+        "data": {
+          "name": "Catalog Service",
+          "technology": "NestJS",
+          "description": "",
+          "environment": "production",
+          "port": null,
+          "tags": [],
+          "envVarNames": [],
+          "endpoints": [],
+          "notes": ""
+        },
+        "meta": {
+          "width": 180,
+          "height": 64
+        }
+      },
+      {
+        "id": "n-order",
+        "type": "backend-service",
+        "position": {
+          "x": 540,
+          "y": 180
+        },
+        "data": {
+          "name": "Order Service",
+          "technology": "NestJS",
+          "description": "",
+          "environment": "production",
+          "port": null,
+          "tags": [],
+          "envVarNames": [],
+          "endpoints": [],
+          "notes": ""
+        },
+        "meta": {
+          "width": 180,
+          "height": 64
+        }
+      },
+      {
+        "id": "n-pay",
+        "type": "payment-provider",
+        "position": {
+          "x": 540,
+          "y": 320
+        },
+        "data": {
+          "name": "Payment Provider",
+          "technology": "Stripe",
+          "description": "",
+          "environment": "production",
+          "port": null,
+          "tags": [],
+          "envVarNames": [],
+          "endpoints": [],
+          "notes": ""
+        },
+        "meta": {
+          "width": 180,
+          "height": 64
+        }
+      },
+      {
+        "id": "n-kafka",
+        "type": "kafka",
+        "position": {
+          "x": 800,
+          "y": 180
+        },
+        "data": {
+          "name": "Kafka",
+          "technology": "Kafka 3",
+          "description": "",
+          "environment": "production",
+          "port": null,
+          "tags": [],
+          "envVarNames": [],
+          "endpoints": [],
+          "notes": ""
+        },
+        "meta": {
+          "width": 180,
+          "height": 64
+        }
+      },
+      {
+        "id": "n-worker",
+        "type": "backend-service",
+        "position": {
+          "x": 1040,
+          "y": 260
+        },
+        "data": {
+          "name": "Notification Worker",
+          "technology": "Node.js",
+          "description": "",
+          "environment": "production",
+          "port": null,
+          "tags": [],
+          "envVarNames": [],
+          "endpoints": [],
+          "notes": ""
+        },
+        "meta": {
+          "width": 180,
+          "height": 64
+        }
+      },
+      {
+        "id": "n-pg",
+        "type": "postgres",
+        "position": {
+          "x": 800,
+          "y": 40
+        },
+        "data": {
+          "name": "Orders DB",
+          "technology": "PostgreSQL 16",
+          "description": "",
+          "environment": "production",
+          "port": null,
+          "tags": [],
+          "envVarNames": [],
+          "endpoints": [],
+          "notes": ""
+        },
+        "meta": {
+          "width": 180,
+          "height": 64
+        }
+      },
+      {
+        "id": "n-redis",
+        "type": "redis",
+        "position": {
+          "x": 280,
+          "y": 20
+        },
+        "data": {
+          "name": "Session Cache",
+          "technology": "Redis 7",
+          "description": "",
+          "environment": "production",
+          "port": null,
+          "tags": [],
+          "envVarNames": [],
+          "endpoints": [],
+          "notes": ""
+        },
+        "meta": {
+          "width": 180,
+          "height": 64
+        }
+      },
+      {
+        "id": "n-dw",
+        "type": "data-warehouse",
+        "position": {
+          "x": 1040,
+          "y": 100
+        },
+        "data": {
+          "name": "Analytics DW",
+          "technology": "Snowflake",
+          "description": "",
+          "environment": "production",
+          "port": null,
+          "tags": [],
+          "envVarNames": [],
+          "endpoints": [],
+          "notes": ""
+        },
+        "meta": {
+          "width": 180,
+          "height": 64
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e-1",
+        "source": "n-client",
+        "target": "n-gw",
+        "label": "HTTPS",
+        "relationship": "sync-call"
+      },
+      {
+        "id": "e-2",
+        "source": "n-gw",
+        "target": "n-catalog",
+        "label": "",
+        "relationship": "sync-call"
+      },
+      {
+        "id": "e-3",
+        "source": "n-gw",
+        "target": "n-order",
+        "label": "",
+        "relationship": "sync-call"
+      },
+      {
+        "id": "e-4",
+        "source": "n-client",
+        "target": "n-redis",
+        "label": "sessions",
+        "relationship": "data-read"
+      },
+      {
+        "id": "e-5",
+        "source": "n-order",
+        "target": "n-pay",
+        "label": "charge",
+        "relationship": "sync-call"
+      },
+      {
+        "id": "e-6",
+        "source": "n-order",
+        "target": "n-pg",
+        "label": "",
+        "relationship": "data-write"
+      },
+      {
+        "id": "e-7",
+        "source": "n-order",
+        "target": "n-kafka",
+        "label": "order.created",
+        "relationship": "async-event"
+      },
+      {
+        "id": "e-8",
+        "source": "n-kafka",
+        "target": "n-worker",
+        "label": "",
+        "relationship": "async-event"
+      },
+      {
+        "id": "e-9",
+        "source": "n-kafka",
+        "target": "n-dw",
+        "label": "cdc",
+        "relationship": "async-event"
+      }
+    ]
+  },
+  "metadata": {
+    "technologies": [
+      "Next.js",
+      "NestJS",
+      "PostgreSQL",
+      "Kafka",
+      "Redis"
+    ],
+    "version": 1
+  }
+}

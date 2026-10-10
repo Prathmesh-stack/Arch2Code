@@ -1,0 +1,10 @@
+{
+  "id": "gen-mv155jgj-0-xdtcjj",
+  "kind": "architecture",
+  "projectId": null,
+  "timestamp": "2026-10-09T15:49:45.283Z",
+  "status": "failed",
+  "provider": "groq",
+  "error": "PROVIDER_HTTP_404: {\"error\":{\"message\":\"The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}\n",
+  "durationMs": 414
+}

@@ -1,0 +1,12 @@
+{
+  "id": "gen-mv1583lr-7-hg43cr",
+  "kind": "architecture",
+  "projectId": null,
+  "timestamp": "2026-10-09T15:51:44.703Z",
+  "status": "success",
+  "provider": "demo",
+  "model": null,
+  "durationMs": 2,
+  "nodeCount": 6,
+  "edgeCount": 5
+}

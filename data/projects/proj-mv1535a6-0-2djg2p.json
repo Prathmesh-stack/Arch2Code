@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": {
+    "id": "proj-mv1535a6-0-2djg2p",
+    "name": "Dbg",
+    "description": "",
+    "status": "in-progress",
+    "createdAt": "2026-10-09T15:47:53.596Z",
+    "updatedAt": "2026-10-09T15:47:53.596Z"
+  },
+  "architecture": {
+    "nodes": [],
+    "edges": []
+  },
+  "metadata": {
+    "technologies": [],
+    "version": 1
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "id": "gen-mv15b4sd-h-y0lzzx",
+  "kind": "architecture",
+  "projectId": null,
+  "timestamp": "2026-10-09T15:54:06.205Z",
+  "status": "success",
+  "provider": "groq",
+  "model": "openai/gpt-oss-120b",
+  "durationMs": 4010,
+  "nodeCount": 8,
+  "edgeCount": 9
+}
