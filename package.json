@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --env-file=.env server/js/server.cjs",
+    "start": "node --env-file-if-exists=.env server/js/server.cjs",
+    "seed": "node --env-file-if-exists=.env scripts/seed.cjs",
     "test": "node --test test/unit.test.cjs test/api.test.cjs",
     "test:unit": "node --test test/unit.test.cjs",
     "test:api": "node --test test/api.test.cjs"

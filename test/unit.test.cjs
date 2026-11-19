@@ -7,6 +7,7 @@ const { TEMPLATES, instantiateTemplate } = require('../shared/js/templates.cjs')
 const { generateProject, hash32 } = require('../shared/js/codegen.cjs');
 const { writeZip, crc32 } = require('../shared/js/zipwriter.cjs');
 const { CATALOG } = require('../shared/js/catalog.cjs');
+const { toMermaid, parseMermaid, inferType } = require('../shared/js/mermaid.cjs');
 
 describe('schema validation', () => {
   test('valid project passes', () => {
@@ -109,6 +110,72 @@ describe('zip writer', () => {
   });
   test('crc32 known value', () => {
     assert.equal(crc32(Buffer.from('123456789')), 0xCBF43926);
+  });
+});
+
+describe('mermaid round-trip', () => {
+  const graphOf = (key) => instantiateTemplate(key, { name: key }).project.architecture;
+
+  test('every built-in template survives export → import', () => {
+    for (const key of Object.keys(TEMPLATES)) {
+      const before = graphOf(key);
+      const after = parseMermaid(toMermaid(before));
+      const sig = (nodes) => nodes.map((n) => `${n.data.name}|${n.type}|${n.data.technology}`).sort().join(';');
+      const edgeSig = (arch) => {
+        const byId = new Map(arch.nodes.map((n) => [n.id, n.data.name]));
+        return arch.edges.map((e) => `${byId.get(e.source)}>${byId.get(e.target)}|${e.relationship}|${e.label}`).sort().join(';');
+      };
+      assert.equal(after.nodes.length, before.nodes.length, key);
+      assert.equal(after.edges.length, before.edges.length, key);
+      assert.equal(sig(after.nodes), sig(before.nodes), key);
+      assert.equal(edgeSig(after), edgeSig(before), key);
+      assert.equal(after.warnings.length, 0, key);
+    }
+  });
+
+  test('exports a valid Mermaid header and quoted labels', () => {
+    const out = toMermaid(graphOf('basic-rest-api'));
+    assert.match(out, /^flowchart LR/);
+    assert.match(out, /\["[^"]+"\]/);
+    assert.equal((out.match(/%% type /g) || []).length, graphOf('basic-rest-api').nodes.length);
+  });
+
+  test('parses foreign diagrams: shapes, chains, labeled and chained edges', () => {
+    const parsed = parseMermaid(`graph TD
+  subgraph Client
+    web[Web App] --> gw(API Gateway)
+  end
+  gw --> svc[Svc] --> db[(PostgreSQL)]
+  svc -.-> queue[Kafka]
+  queue ==> dw[Analytics DW]
+  style web fill:#fff
+  classDef x fill:#000`);
+    assert.equal(parsed.nodes.length, 6);
+    assert.equal(parsed.edges.length, 5);
+    const byName = new Map(parsed.nodes.map((n) => [n.data.name, n]));
+    assert.equal(byName.get('Web App').type, 'web-app');
+    assert.equal(byName.get('API Gateway').type, 'api-gateway');
+    assert.equal(byName.get('PostgreSQL').type, 'postgres');
+    assert.equal(byName.get('Kafka').type, 'kafka');
+    const rels = parsed.edges.map((e) => e.relationship);
+    assert.ok(rels.includes('async-event'));
+    assert.ok(rels.includes('data-write'));
+    assert.ok(parsed.warnings.some((w) => /Subgraph/.test(w)));
+  });
+
+  test('rejects non-flowchart text and keeps self-loops out', () => {
+    assert.equal(parseMermaid('hello world, not a diagram').nodes.length, 0);
+    const parsed = parseMermaid('flowchart LR\n  a[A] --> a\n  a --> b[B]');
+    assert.equal(parsed.nodes.length, 2);
+    assert.equal(parsed.edges.length, 1);
+    assert.ok(parsed.warnings.some((w) => /Self-connection/.test(w)));
+  });
+
+  test('type inference covers common labels', () => {
+    assert.equal(inferType('PostgreSQL', ''), 'postgres');
+    assert.equal(inferType('Redis Cache', ''), 'redis');
+    assert.equal(inferType('Kubernetes Cluster', ''), 'kubernetes-cluster');
+    assert.equal(inferType('Mystery Box', ''), 'backend-service');
   });
 });
 

@@ -1,7 +1,13 @@
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
+const { mkdtempSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
 
 process.env.PORT = '8791';
+// keep test data out of the real workspace
+const TEST_DATA_DIR = mkdtempSync(join(tmpdir(), 'a2c-test-data-'));
+process.env.ARCH2CODE_DATA_DIR = TEST_DATA_DIR;
 delete process.env.GROQ_API_KEY; // keep AI provider off for tests
 const { server } = require('../server/js/server.cjs');
 
@@ -20,13 +26,27 @@ describe('API', () => {
     if (!server.listening) await new Promise((r) => server.listen(0, r));
     BASE = `http://localhost:${server.address().port}`;
   });
-  after(() => new Promise((r) => server.close(r)));
+  after(() => new Promise((r) => {
+    server.close(() => {
+      try { rmSync(TEST_DATA_DIR, { recursive: true, force: true }); } catch {}
+      r();
+    });
+  }));
 
   test('health', async () => {
     const { status, data } = await j('GET', '/api/health');
     assert.equal(status, 200);
     assert.equal(data.ok, true);
     assert.match(data.aiProvider, /demo|groq/);
+  });
+
+  test('security headers on API and SPA responses', async () => {
+    for (const url of ['/api/health', '/']) {
+      const res = await fetch(BASE + url);
+      assert.equal(res.headers.get('x-content-type-options'), 'nosniff', url);
+      assert.equal(res.headers.get('x-frame-options'), 'DENY', url);
+      assert.match(res.headers.get('content-security-policy') || '', /default-src 'self'/, url);
+    }
   });
 
   test('create → list → get roundtrip', async () => {
@@ -84,6 +104,38 @@ describe('API', () => {
     assert.equal(buf.readUInt32LE(0), 0x04034b50);
   });
 
+  test('mermaid export is downloadable and re-importable', async () => {
+    const res = await fetch(`${BASE}/api/projects/${id}/export?format=mermaid`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /text\/plain/);
+    assert.match(res.headers.get('content-disposition'), /\.mmd"/);
+    const text = await res.text();
+    assert.match(text, /^flowchart LR/);
+    assert.match(text, /\["DB(<br\/>pg)?"\]/);
+
+    const imp = await j('POST', `/api/projects/${id}/import/mermaid`, { text, mode: 'replace' });
+    assert.equal(imp.status, 200);
+    assert.equal(imp.data.stats.nodes, 1);
+    assert.equal(imp.data.project.architecture.nodes[0].data.name, 'DB');
+    assert.equal(imp.data.project.architecture.nodes[0].type, 'postgres');
+
+    const merged = await j('POST', `/api/projects/${id}/import/mermaid`, {
+      text: 'flowchart LR\n  cache[Redis Cache] --> orders[(Orders DB)]',
+      mode: 'merge',
+    });
+    assert.equal(merged.status, 200);
+    assert.equal(merged.data.stats.nodes, 2);
+    assert.equal(merged.data.project.architecture.nodes.length, 3);
+
+    assert.equal((await j('POST', `/api/projects/${id}/import/mermaid`, { text: 'not a diagram' })).status, 422);
+    assert.equal((await j('POST', `/api/projects/${id}/import/mermaid`, { text: '   ' })).status, 400);
+
+    // restore the single-node graph the later tests expect
+    const original = merged.data.project.architecture.nodes.filter((n) => n.data.name === 'DB');
+    const restored = await j('PUT', `/api/projects/${id}`, { ...merged.data.project, architecture: { nodes: original, edges: [] } });
+    assert.equal(restored.status, 200);
+  });
+
   test('path traversal id rejected', async () => {
     const { status } = await j('GET', `/api/projects/${encodeURIComponent('..%2F..%2Fserver')}`);
     assert.equal(status, 404);
@@ -102,6 +154,38 @@ describe('API', () => {
     assert.ok(g.data.proposal.edges.length >= 2);
     const hist = await j('GET', '/api/generations');
     assert.ok(hist.data.generations.some((x) => x.kind === 'architecture'));
+  });
+
+  test('duplicate creates an independent copy', async () => {
+    const source = await j('GET', `/api/projects/${id}`);
+    const dup = await j('POST', '/api/projects', { ...source.data.project, duplicate: true });
+    assert.equal(dup.status, 201);
+    const copy = dup.data.project;
+    assert.notEqual(copy.project.id, id);
+    assert.match(copy.project.name, /\(copy\)$/);
+    assert.equal(copy.architecture.nodes.length, source.data.project.architecture.nodes.length);
+    // mutating the copy must not touch the source
+    copy.architecture.nodes[0].data.name = 'COPY-ONLY';
+    const put = await j('PUT', `/api/projects/${copy.project.id}`, copy);
+    assert.equal(put.status, 200);
+    const again = await j('GET', `/api/projects/${id}`);
+    assert.equal(again.data.project.architecture.nodes[0].data.name, 'DB');
+    assert.equal((await j('DELETE', `/api/projects/${copy.project.id}`)).status, 200);
+  });
+
+  test('duplicate without a valid archive is rejected', async () => {
+    const bad = await j('POST', '/api/projects', { duplicate: true, project: { id: 'x' } });
+    assert.equal(bad.status, 422);
+  });
+
+  test('AI endpoint is rate limited per IP', async () => {
+    let last = null;
+    for (let i = 0; i < 25; i++) {
+      last = await j('POST', '/api/ai/generate', { prompt: 'rate limit probe with kafka and redis' });
+      if (last.status === 429) break;
+    }
+    assert.equal(last.status, 429);
+    assert.match(last.data.error, /too many AI requests/);
   });
 
   test('delete project removes it', async () => {

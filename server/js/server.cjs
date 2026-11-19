@@ -10,13 +10,64 @@ const { TEMPLATES, instantiateTemplate, uid } = require('../../shared/js/templat
 const { generateProject: generateCode } = require('../../shared/js/codegen.cjs');
 const { writeZip } = require('../../shared/js/zipwriter.cjs');
 const { generateArchitecture, generateDemoProposal } = require('./ai.cjs');
+const { toMermaid, parseMermaid } = require('../../shared/js/mermaid.cjs');
 
 const PORT = Number(process.env.PORT) || 8787;
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
+const DATA_DIR = process.env.ARCH2CODE_DATA_DIR
+  ? path.resolve(process.env.ARCH2CODE_DATA_DIR)
+  : path.join(__dirname, '..', '..', 'data');
 const PROJECTS_DIR = path.join(DATA_DIR, 'projects');
 const GEN_DIR = path.join(DATA_DIR, 'generations');
 const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
 const MAX_BODY = 4 * 1024 * 1024; // 4 MB
+// DEMO_MODE=1 forces the deterministic generator even when a provider key is set.
+// AI_FALLBACK=off makes provider failures return 502 instead of a labeled demo proposal.
+const FORCE_DEMO = String(process.env.DEMO_MODE || '') === '1';
+const AI_FALLBACK = String(process.env.AI_FALLBACK || 'on').toLowerCase() !== 'off';
+const AI_RATE_LIMIT = Number(process.env.AI_RATE_LIMIT) > 0 ? Number(process.env.AI_RATE_LIMIT) : 12;
+const AI_RATE_WINDOW_MS = 5 * 60 * 1000;
+
+/* ---------- security headers ---------- */
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'same-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "frame-src https://stackblitz.com",
+    "form-action 'self' https://stackblitz.com",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "frame-ancestors 'self'",
+  ].join('; '),
+};
+
+function applySecurityHeaders(res) {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
+}
+
+/* ---------- AI rate limiting (per IP, sliding window) ---------- */
+const aiHits = new Map();
+function aiRateLimited(ip) {
+  const now = Date.now();
+  const hits = (aiHits.get(ip) || []).filter((t) => now - t < AI_RATE_WINDOW_MS);
+  if (hits.length >= AI_RATE_LIMIT) {
+    aiHits.set(ip, hits);
+    return Math.ceil((AI_RATE_WINDOW_MS - (now - hits[0])) / 1000);
+  }
+  hits.push(now);
+  aiHits.set(ip, hits);
+  if (aiHits.size > 1000) {
+    for (const [k, v] of aiHits) if (!v.some((t) => now - t < AI_RATE_WINDOW_MS)) aiHits.delete(k);
+  }
+  return 0;
+}
 
 function ensureDirs() {
   for (const d of [DATA_DIR, PROJECTS_DIR, GEN_DIR]) {
@@ -51,6 +102,7 @@ function readProject(id) {
 function writeProject(archive) {
   const p = projectPath(archive.project.id);
   if (!p) return { ok: false, status: 400, body: { error: 'invalid id' } };
+  ensureDirs();
   const tmp = `${p}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmp, JSON.stringify(archive, null, 2));
   fs.renameSync(tmp, p); // atomic on same volume
@@ -106,13 +158,28 @@ async function handleAi(req, res, url) {
   }
   if (body.prompt.length > 4000) return send(res, 413, { error: 'prompt too long (max 4000 chars)' });
 
-  const useProvider = process.env.GROQ_API_KEY && body.mode !== 'demo';
   const started = Date.now();
-  let result, mode;
+  const liveAi = Boolean(process.env.GROQ_API_KEY) && !FORCE_DEMO;
+  let result;
+  let mode;
+  let warning = null;
+  let providerError = null;
+
   try {
-    if (useProvider) {
-      result = await generateArchitecture(body);
-      mode = 'groq';
+    if (liveAi) {
+      try {
+        result = await generateArchitecture(body);
+        mode = 'groq';
+      } catch (e) {
+        // Demo-day safety net: a dead network/quota must not kill the demo.
+        // The response is explicitly labeled so it never masquerades as model output.
+        if (!AI_FALLBACK) throw e;
+        result = generateDemoProposal(body);
+        mode = 'demo-fallback';
+        providerError = String(e.message).replace(/\s+/g, ' ').slice(0, 200);
+        warning = `AI provider unavailable (${providerError}) — showing the deterministic demo proposal instead.`;
+        console.warn('[arch2code] AI provider failed, used demo fallback:', e.message);
+      }
     } else {
       result = generateDemoProposal(body);
       mode = 'demo';
@@ -121,19 +188,21 @@ async function handleAi(req, res, url) {
     const record = {
       id: uid('gen'), kind: 'architecture', projectId: body.projectId || null,
       timestamp: new Date().toISOString(), status: 'failed',
-      provider: useProvider ? 'groq' : 'demo', error: e.message, durationMs: Date.now() - started,
+      provider: liveAi ? 'groq' : 'demo', error: e.message, durationMs: Date.now() - started,
     };
     persistGeneration(record);
     return send(res, 502, { error: `AI generation failed: ${e.message}` });
   }
+
   const record = {
     id: uid('gen'), kind: 'architecture', projectId: body.projectId || null,
-    timestamp: new Date().toISOString(), status: 'success', provider: mode,
+    timestamp: new Date().toISOString(), status: providerError ? 'fallback' : 'success', provider: mode,
     model: result.model, durationMs: Date.now() - started,
     nodeCount: result.proposal.nodes.length, edgeCount: result.proposal.edges.length,
+    ...(providerError ? { providerError } : {}),
   };
   persistGeneration(record);
-  return send(res, 200, { mode, ...result });
+  return send(res, 200, { mode, ...(warning ? { warning, providerError } : {}), ...result });
 }
 
 function persistGeneration(record) {
@@ -183,12 +252,16 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const p = url.pathname;
   const method = req.method;
+  applySecurityHeaders(res);
 
   try {
     if (p === '/api/health' && method === 'GET') {
+      const liveAi = Boolean(process.env.GROQ_API_KEY) && !FORCE_DEMO;
       return send(res, 200, {
         ok: true, server: 'arch2code', time: new Date().toISOString(),
-        aiProvider: process.env.GROQ_API_KEY ? 'groq' : 'demo (no GROQ_API_KEY)',
+        aiProvider: liveAi ? 'groq' : (FORCE_DEMO ? 'demo (forced by DEMO_MODE)' : 'demo (no provider configured)'),
+        demoMode: !liveAi,
+        aiFallback: liveAi && AI_FALLBACK,
         schemaVersion: SCHEMA_VERSION,
       });
     }
@@ -207,6 +280,30 @@ const server = http.createServer(async (req, res) => {
       let body;
       try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
       catch (e) { return send(res, e.statusCode || 400, { error: e.message }); }
+
+      // Duplicate = full archive posted with duplicate:true. Server assigns a fresh
+      // identity and a unique name so the client can never overwrite the source.
+      if (body && body.duplicate === true) {
+        const archive = { ...body };
+        delete archive.duplicate;
+        const v = validateProject(archive);
+        if (!v.ok) return send(res, 422, { error: 'invalid project archive', detail: v.errors });
+        const now = new Date().toISOString();
+        const clone = {
+          ...v.project,
+          project: {
+            ...v.project.project,
+            id: uid('proj'),
+            name: uniqueProjectName(stripCopySuffix(v.project.project.name)),
+            createdAt: now,
+            updatedAt: now,
+          },
+        };
+        const v2 = validateProject(clone);
+        if (!v2.ok) return send(res, 500, { error: 'internal schema error', detail: v2.errors });
+        writeProject(v2.project);
+        return send(res, 201, { project: v2.project });
+      }
 
       if (body.template) {
         const inst = instantiateTemplate(body.template, { name: body.name, description: body.description });
@@ -271,10 +368,76 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, result);
     }
 
+    if ((m = p.match(/^\/api\/projects\/([a-zA-Z0-9_-]+)\/import\/mermaid$/)) && method === 'POST') {
+      const r = readProject(m[1]);
+      if (!r.ok) return send(res, r.status, r.body);
+      let body;
+      try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+      catch (e) { return send(res, e.statusCode || 400, { error: e.message }); }
+      const text = typeof body.text === 'string' ? body.text : '';
+      if (!text.trim()) return send(res, 400, { error: 'Mermaid text is required' });
+      if (text.length > 200 * 1024) return send(res, 413, { error: 'Mermaid text too large (max 200 KB)' });
+
+      const mode = body.mode === 'merge' ? 'merge' : 'replace';
+      const parsed = parseMermaid(text);
+      if (!parsed.nodes.length) {
+        return send(res, 422, { error: 'no nodes found in the Mermaid text', detail: parsed.warnings });
+      }
+
+      let architecture;
+      if (mode === 'merge') {
+        // keep both graphs readable: shift the incoming diagram to the right of the existing one
+        const maxX = r.project.architecture.nodes.reduce((mx, n) => Math.max(mx, Number(n.position?.x) || 0), 0);
+        const dx = r.project.architecture.nodes.length ? maxX + 320 : 0;
+        for (const n of parsed.nodes) n.position = { x: n.position.x + dx, y: n.position.y };
+        architecture = {
+          nodes: [...r.project.architecture.nodes, ...parsed.nodes],
+          edges: [...r.project.architecture.edges, ...parsed.edges],
+        };
+      } else {
+        architecture = { nodes: parsed.nodes, edges: parsed.edges };
+      }
+
+      const next = validateProject({
+        ...r.project,
+        project: { ...r.project.project, updatedAt: new Date().toISOString() },
+        architecture,
+      });
+      if (!next.ok) return send(res, 422, { error: 'imported diagram failed validation', detail: next.errors });
+      writeProject(next.project);
+      return send(res, 200, {
+        project: next.project,
+        mode,
+        stats: { nodes: parsed.nodes.length, edges: parsed.edges.length },
+        warnings: parsed.warnings,
+      });
+    }
+
+    if ((m = p.match(/^\/api\/projects\/([a-zA-Z0-9_-]+)\/code$/)) && method === 'GET') {
+      const r = readProject(m[1]);
+      if (!r.ok) return send(res, r.status, r.body);
+      const gen = generateCode(r.project.architecture, { projectName: r.project.project.name });
+      const files = gen.files.map((f) => ({ path: f.path, content: f.content, bytes: Buffer.byteLength(f.content) }));
+      return send(res, 200, {
+        target: gen.target,
+        files,
+        skipped: gen.skipped || [],
+        stats: { files: files.length, bytes: files.reduce((n, f) => n + f.bytes, 0) },
+      });
+    }
+
     if ((m = p.match(/^\/api\/projects\/([a-zA-Z0-9_-]+)\/export$/)) && (method === 'GET' || method === 'POST')) {
       const r = readProject(m[1]);
       if (!r.ok) return send(res, r.status, r.body);
       const format = url.searchParams.get('format') || 'json';
+      if (format === 'mermaid') {
+        const direction = (url.searchParams.get('direction') || 'LR').toUpperCase();
+        const diagram = toMermaid(r.project.architecture, { direction });
+        return send(res, 200, diagram, {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${slug(r.project.project.name)}.mmd"`,
+        });
+      }
       if (format === 'validation-report') {
         const report = { project: r.project.project.name, generatedAt: new Date().toISOString(), ...validateArchitecture(r.project.architecture) };
         return send(res, 200, report, { 'Content-Disposition': 'attachment; filename="validation-report.json"' });
@@ -294,7 +457,14 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/generations' && method === 'GET') return send(res, 200, { generations: listGenerations() });
 
-    if (p === '/api/ai/generate' && method === 'POST') return handleAi(req, res, url);
+    if (p === '/api/ai/generate' && method === 'POST') {
+      const ip = req.socket.remoteAddress || 'unknown';
+      const retryAfter = aiRateLimited(ip);
+      if (retryAfter > 0) {
+        return send(res, 429, { error: `too many AI requests — retry in ${retryAfter}s` }, { 'Retry-After': String(retryAfter) });
+      }
+      return handleAi(req, res, url);
+    }
 
     if (p === '/api/templates' && method === 'GET') {
       return send(res, 200, { templates: Object.entries(TEMPLATES).map(([key, t]) => ({ key, name: t.name, description: t.description })) });
@@ -309,15 +479,34 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+/** "Order System (copy) (copy)" → "Order System" so repeated duplicates don't stack suffixes. */
+function stripCopySuffix(name) {
+  return String(name || 'Untitled').replace(/(\s*\(copy(?: \d+)?\))+$/i, '').trim() || 'Untitled';
+}
+
+function uniqueProjectName(base) {
+  const existing = new Set(listProjects().map((p) => p.project.name));
+  if (!existing.has(base)) return base;
+  const candidate = `${base} (copy)`;
+  if (!existing.has(candidate)) return candidate;
+  for (let i = 2; i < 500; i++) {
+    const next = `${base} (copy ${i})`;
+    if (!existing.has(next)) return next;
+  }
+  return `${base} (copy ${Date.now()})`;
+}
+
 function slug(s) {
   return String(s || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
 }
 
-ensureDirs();
-server.listen(PORT, () => {
-  console.log(`[arch2code] server on http://localhost:${PORT}`);
-  console.log(`[arch2code] AI provider: ${process.env.GROQ_API_KEY ? 'Groq (live)' : 'demo fallback (no GROQ_API_KEY set)'}`);
+if (require.main === module) {
+  ensureDirs();
+  server.listen(PORT, () => {
+    console.log(`[arch2code] server on http://localhost:${PORT}`);
+  console.log(`[arch2code] AI provider: ${process.env.GROQ_API_KEY ? 'Groq (live)' : 'demo fallback (no provider configured)'}`);
   console.log(`[arch2code] data dir: ${DATA_DIR}`);
-});
+  });
+}
 
 module.exports = { server };

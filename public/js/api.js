@@ -32,6 +32,8 @@ window.api = (function () {
       return res.json();
     },
     exportUrl: (id, fmt) => `/api/projects/${id}/export${fmt ? `?format=${fmt}` : ''}`,
+    getCode: (id) => req('GET', `/api/projects/${id}/code`),
+    importMermaid: (id, payload) => req('POST', `/api/projects/${id}/import/mermaid`, payload),
     validateOnServer: (id) => req('POST', `/api/projects/${id}/validate`, {}),
     listGenerations: () => req('GET', '/api/generations'),
     generateArchitecture: (payload) => req('POST', '/api/ai/generate', payload),
