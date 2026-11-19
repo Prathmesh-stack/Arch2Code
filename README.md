@@ -98,3 +98,4 @@ test/            unit.test.cjs, api.test.cjs
 - The client app.js is a single bundled file (kept deliberately build-step-free); the server tests cover all business logic it calls.
 - No local IDE integration: the app does not write scaffold files to a folder on your machine or launch VS Code/JetBrains. Use the ZIP, or the browser sandbox above, for live development.
 - The AI review modal is the trust boundary: generated proposals are schema-checked but not design-reviewed. Demo/fallback proposals are deterministic templates, not model output.
+  ## Future Scope
